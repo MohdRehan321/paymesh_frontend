@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import '../stylesheets/sendMoney.scss';
+import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const SendMoney = () => {
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     receiverId: '',
-    amount: ''
+    amount: '',
   });
   const [users, setUsers] = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -15,80 +18,59 @@ const SendMoney = () => {
   const [rewardData, setRewardData] = useState(null);
   const [errorTitle, setErrorTitle] = useState('');
   const [errorDescription, setErrorDescription] = useState('');
+  const [idempotencyKey, setIdempotencyKey] = useState('');
+
+  const currentUserId = Number(user?.id ?? user?.userId ?? user?.sub);
 
   useEffect(() => {
-    fetchUsers();
-    fetchRecentTransactions();
+    setIdempotencyKey(crypto.randomUUID());
   }, []);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8080/api/users/all', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const usersData = await response.json();
-        setUsers(usersData);
-      }
+      const response = await api.get('/api/users/all');
+      const usersData = response.data || [];
+      setUsers(usersData.filter((u) => Number(u.id) !== currentUserId));
     } catch (error) {
       console.error('Error fetching users:', error);
     }
-  };
+  }, [currentUserId]);
 
-  const fetchRecentTransactions = async () => {
+  const fetchRecentTransactions = useCallback(async () => {
+    if (!currentUserId) return;
+
     try {
-      const token = localStorage.getItem('token');
-      const tokenPayload = JSON.parse(atob(token.split('.')[1]));
-      const userId = tokenPayload.userId;
-      
-      const response = await fetch(`http://localhost:8080/api/transactions/user/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const transactionsData = await response.json();
-        const sortedTransactions = transactionsData
-          .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-          .slice(0, 3);
-        setTransactions(sortedTransactions);
-      }
+      const response = await api.get(`/api/transactions/user/${currentUserId}`);
+      const sortedTransactions = (response.data || [])
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .slice(0, 3);
+      setTransactions(sortedTransactions);
     } catch (error) {
       console.error('Error fetching transactions:', error);
     }
-  };
+  }, [currentUserId]);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  useEffect(() => {
+    fetchRecentTransactions();
+  }, [fetchRecentTransactions]);
 
   const fetchUserRewards = async (userId) => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8083/api/rewards/user/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const rewardsData = await response.json();
-        return rewardsData;
-      }
+      const response = await api.get(`/api/rewards/user/${userId}`);
+      return response.data || [];
     } catch (error) {
       console.error('Error fetching rewards:', error);
+      return [];
     }
-    return [];
   };
 
   const addNewTransaction = (newTransaction) => {
-    setTransactions(prevTransactions => {
-      const updatedTransactions = [newTransaction, ...prevTransactions].slice(0, 3);
-      return updatedTransactions;
+    setTransactions((prevTransactions) => {
+      return [newTransaction, ...prevTransactions].slice(0, 3);
     });
   };
 
@@ -100,7 +82,6 @@ const SendMoney = () => {
 
   const showReward = (rewards) => {
     if (rewards && rewards.length > 0) {
-      // Get the latest reward
       const latestReward = rewards[rewards.length - 1];
       setRewardData(latestReward);
       setShowRewardPopup(true);
@@ -118,27 +99,29 @@ const SendMoney = () => {
   const handleChange = (e) => {
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [e.target.name]: e.target.value,
     });
   };
 
   const extractCleanErrorMessage = (technicalMessage) => {
     if (!technicalMessage) return 'Transaction failed';
-    
-    if (technicalMessage.includes('Not enough balance') || 
-        technicalMessage.includes('InsufficientFundsException')) {
+
+    if (
+      technicalMessage.includes('Not enough balance') ||
+      technicalMessage.includes('InsufficientFundsException')
+    ) {
       return 'Insufficient funds in your wallet';
     }
-    
+
     try {
       const jsonMatch = technicalMessage.match(/"message":"([^"]+)"/);
       if (jsonMatch && jsonMatch[1]) {
         return jsonMatch[1];
       }
     } catch (e) {
-      // If parsing fails, continue to generic message
+      // Ignore parse issues and fall back to generic message.
     }
-    
+
     return 'Transaction failed - please try again';
   };
 
@@ -148,51 +131,42 @@ const SendMoney = () => {
     setMessage('');
 
     try {
-      const token = localStorage.getItem('token');
-      const tokenPayload = JSON.parse(atob(token.split('.')[1]));
-      const senderId = tokenPayload.userId;
+      if (!currentUserId) {
+        throw new Error('Unable to determine current user');
+      }
 
       const payload = {
-        senderId: parseInt(senderId),
-        receiverId: parseInt(formData.receiverId),
-        amount: parseFloat(formData.amount)
+        senderId: currentUserId,
+        receiverId: parseInt(formData.receiverId, 10),
+        amount: parseFloat(formData.amount),
+        idempotencyKey,
       };
 
-      const response = await fetch('http://localhost:8080/api/transactions/create', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
+      const response = await api.post('/api/transactions/create', payload);
+      const data = response.data;
 
-      const data = await response.json();
+      if (data.status === 'SUCCESS') {
+        setMessage('✅ Money sent successfully!');
+        setFormData({ receiverId: '', amount: '' });
+        addNewTransaction(data);
+        setIdempotencyKey(crypto.randomUUID());
 
-      if (response.ok) {
-        if (data.status === 'SUCCESS') {
-          setMessage('✅ Money sent successfully!');
-          setFormData({ receiverId: '', amount: '' });
-          
-          // Add the new transaction immediately to the list
-          addNewTransaction(data);
-          
-          // Fetch and show rewards after successful transaction
-          setTimeout(async () => {
-            const rewards = await fetchUserRewards(senderId);
-            showReward(rewards);
-          }, 1000); // 1 second delay to show success first
-          
-        } else {
-          const cleanError = extractCleanErrorMessage(data.message);
-          showError('Transaction Failed', cleanError);
-          addNewTransaction(data);
-        }
+        setTimeout(async () => {
+          const rewards = await fetchUserRewards(currentUserId);
+          showReward(rewards);
+        }, 1000);
       } else {
-        showError('Transaction Error', data.message || 'Failed to send money');
+        const cleanError = extractCleanErrorMessage(data.message);
+        showError('Transaction Failed', cleanError);
+        addNewTransaction(data);
       }
     } catch (error) {
-      showError('Network Error', error.message);
+      const apiMessage =
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message;
+
+      showError('Transaction Error', extractCleanErrorMessage(apiMessage));
     } finally {
       setLoading(false);
     }
@@ -204,24 +178,22 @@ const SendMoney = () => {
       day: 'numeric',
       year: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   };
 
   const getUserName = (userId) => {
-    const user = users.find(u => u.id === userId);
-    return user ? user.name : `User ${userId}`;
+    const matchedUser = users.find((u) => Number(u.id) === Number(userId));
+    return matchedUser ? matchedUser.name : `User ${userId}`;
   };
 
   const isSentTransaction = (transaction) => {
-    const tokenPayload = JSON.parse(atob(localStorage.getItem('token').split('.')[1]));
-    const currentUserId = tokenPayload.userId;
-    return transaction.senderId === parseInt(currentUserId);
+    if (!currentUserId) return false;
+    return Number(transaction.senderId) === currentUserId;
   };
 
   return (
     <div className="send-money-container">
-      {/* Reward Popup Modal */}
       {showRewardPopup && rewardData && (
         <div className="reward-popup-overlay">
           <div className="reward-popup">
@@ -250,7 +222,6 @@ const SendMoney = () => {
         </div>
       )}
 
-      {/* Error Popup Modal */}
       {showErrorPopup && (
         <div className="error-popup-overlay">
           <div className="error-popup">
@@ -288,9 +259,9 @@ const SendMoney = () => {
               required
             >
               <option value="">Select a user</option>
-              {users.map(user => (
-                <option key={user.id} value={user.id}>
-                  {user.name} ({user.email})
+              {users.map((userItem) => (
+                <option key={userItem.id} value={userItem.id}>
+                  {userItem.name} ({userItem.email})
                 </option>
               ))}
             </select>
@@ -312,10 +283,10 @@ const SendMoney = () => {
             />
           </div>
 
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             className="submit-btn"
-            disabled={loading}
+            disabled={loading || !idempotencyKey}
           >
             {loading ? (
               <>
@@ -338,16 +309,15 @@ const SendMoney = () => {
           <h3>Recent Transactions</h3>
           {transactions.length > 0 ? (
             <div className="transactions-list">
-              {transactions.map(transaction => (
+              {transactions.map((transaction) => (
                 <div key={transaction.id} className="transaction-item">
                   <div className="transaction-details">
                     <div className="transaction-type">
-                      {isSentTransaction(transaction) ? 'Sent to' : 'Received from'} 
+                      {isSentTransaction(transaction) ? 'Sent to' : 'Received from'}
                       <span className="user-name">
-                        {isSentTransaction(transaction) 
+                        {isSentTransaction(transaction)
                           ? getUserName(transaction.receiverId)
-                          : getUserName(transaction.senderId)
-                        }
+                          : getUserName(transaction.senderId)}
                       </span>
                     </div>
                     <div className="transaction-date">

@@ -1,0 +1,61 @@
+Folder PATH listing
+Volume serial number is 0454-84C6
+C:.
+¦   .gitignore
+¦   package-lock.json
+¦   package.json
+¦   README.md
+¦   structure.txt
+¦   
++---public
+¦   ¦   favicon.ico
+¦   ¦   index.html
+¦   ¦   logo192.png
+¦   ¦   logo512.png
+¦   ¦   manifest.json
+¦   ¦   robots.txt
+¦   ¦   
+¦   +---assets
+¦           logo.png
+¦           
++---src
+    ¦   App.css
+    ¦   App.jsx
+    ¦   App.test.js
+    ¦   index.css
+    ¦   index.js
+    ¦   logo.svg
+    ¦   reportWebVitals.js
+    ¦   setupTests.js
+    ¦   
+    +---components
+    ¦       header.jsx
+    ¦       InputField.jsx
+    ¦       Layout.jsx
+    ¦       ProtectedRoute.jsx
+    ¦       
+    +---context
+    ¦       AuthContext.jsx
+    ¦       
+    +---pages
+    ¦       AddFunds.jsx
+    ¦       Dashboard.jsx
+    ¦       Home.jsx
+    ¦       LoginPage.jsx
+    ¦       MyProfile.jsx
+    ¦       Rewards.jsx
+    ¦       SendMoney.jsx
+    ¦       SignupPage.jsx
+    ¦       TransactionPage.jsx
+    ¦       
+    +---stylesheets
+            dashboard.scss
+            header.scss
+            home.scss
+            layout.scss
+            myprofile.scss
+            rewards.scss
+            sendMoney.scss
+            styles.scss
+            transaction.scss
+            

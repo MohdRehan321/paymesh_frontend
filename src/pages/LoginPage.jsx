@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext"; 
+import api from "../services/api"; // Use our new centralized API layer
 import "../stylesheets/styles.scss";
 
 function LoginPage() {
@@ -14,41 +15,39 @@ function LoginPage() {
     const payload = { email, password };
   
     try {
-      const response = await fetch("http://localhost:8080/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-  
-      const data = await response.json();
-  
-      if (!response.ok) {
-        alert("Login failed: " + (data.message || "Unknown error"));
-        return;
+    const response = await api.post("/auth/login", payload);
+    
+    // 1. Try Header first (safest), then try standard JSON body
+    let token = response.headers['authorization']?.replace("Bearer ", "") || response.data?.token;
+
+    // 2. If body is a raw text string instead of JSON, parse it
+    if (!token && typeof response.data === 'string') {
+      try {
+        token = JSON.parse(response.data).token;
+      } catch (e) {
+        token = response.data; // Final fallback if it's strictly a raw string
       }
-  
-      localStorage.setItem("token", data.token);
-      
-      // ADD THESE LINES - Store user data if available
-      if (data.user) {
-        localStorage.setItem("userData", JSON.stringify(data.user));
-        login(data.user, data.token); // Update auth context
-      } else {
-        // If no user data in response, create a basic user object
-        const userData = { email: email, name: email.split('@')[0] };
-        localStorage.setItem("userData", JSON.stringify(userData));
-        login(userData, data.token); // Update auth context
-      }
-      
-      alert("Login successful!");
-  
-      // Redirect to /home
-      navigate("/home");
-  
-    } catch (err) {
-      console.error("Network error:", err);
-      alert("Network error: " + err.message);
     }
+      if (token) {
+        login(token); 
+        alert("Login successful!");
+        navigate("/home");
+      } else {
+        alert("Login failed: No token received from server. Check backend response format.");
+        console.log("Full Response:", response); // Helps debug if token is hiding elsewhere
+      }
+  
+   } catch (err) {
+    console.error("Network error:", err);
+    const errorData = err.response?.data;
+    
+    // Check if the backend sent a JSON object, stringify it or extract the message
+    const errorMessage = typeof errorData === 'object' 
+        ? (errorData.message || JSON.stringify(errorData)) 
+        : (errorData || err.message);
+        
+    alert("Request failed: " + errorMessage);
+   }
   };
 
   return (
@@ -92,7 +91,7 @@ function LoginPage() {
         </form>
 
         <div className="auth-footer">
-          <p>Don't have an account? <a href="/signup">Sign up</a></p>
+          <p>Don't have an account? <Link to="/signup">Sign up</Link></p>
         </div>
       </div>
     </div>

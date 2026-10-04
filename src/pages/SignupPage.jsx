@@ -1,39 +1,43 @@
 import React, { useState } from "react";
-import "../stylesheets/styles.scss"
+import { useNavigate, Link } from "react-router-dom";
+import api from "../services/api"; // Use our new centralized API layer
+import "../stylesheets/styles.scss";
 
 function SignupPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const navigate = useNavigate();
 
   const handleSignup = async (e) => {
     e.preventDefault();
     const payload = { name, email, password };
 
     try {
-      const response = await fetch("http://localhost:8080/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      // Axios automatically throws an error for 400/500 status codes
+      await api.post("/auth/signup", payload);
 
-      const text = await response.text();
-
-      if (!response.ok) {
-        alert(`Signup failed: ${text}`);
-        return;
-      }
-
-      alert(text);
+      alert("Account created successfully!");
       setName("");
       setEmail("");
       setPassword("");
+      
+      // Send user to login page smoothly
+      navigate("/login");
 
     } catch (err) {
-      console.error("Network error:", err);
-      alert("Network error: " + err.message);
-    }
+    console.error("Network error:", err);
+    const errorData = err.response?.data;
+    
+    // Check if the backend sent a JSON object, stringify it or extract the message
+    const errorMessage = typeof errorData === 'object' 
+        ? (errorData.message || JSON.stringify(errorData)) 
+        : (errorData || err.message);
+        
+    alert("Request failed: " + errorMessage);
+     }
   };
+  
 
   return (
     <div className="auth-container">
@@ -89,7 +93,7 @@ function SignupPage() {
         </form>
 
         <div className="auth-footer">
-          <p>Already have an account? <a href="/login">Sign in</a></p>
+          <p>Already have an account? <Link to="/login">Sign in</Link></p>
         </div>
       </div>
     </div>

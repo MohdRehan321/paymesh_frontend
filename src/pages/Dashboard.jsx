@@ -1,213 +1,89 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import '../stylesheets/dashboard.scss';
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from 'react-router-dom';
+import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const Dashboard = () => {
-  const [user, setUser] = useState(null);
+  const { user } = useAuth();
   const [stats, setStats] = useState({});
   const [transactions, setTransactions] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastNotificationCount, setLastNotificationCount] = useState(0);
-  // ADDED: Separate state for unread notifications
-  const [unreadNotifications, setUnreadNotifications] = useState([]);
-  const [showNotificationsPanel, setShowNotificationsPanel] = useState(false);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchDashboardData();
-    
-    // Poll for new notifications every 10 seconds
-    const pollInterval = setInterval(() => {
-      checkNewNotifications();
-    }, 10000); // 10 seconds
-    
-    return () => clearInterval(pollInterval);
-  }, []);
+  const userId = user?.id ?? user?.userId ?? user?.sub;
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     try {
-      const token = localStorage.getItem('token');
-
-      if (!token) {
-        navigate("/");
-        throw new Error('No authentication token found. Please login.');
-      }
-
-      // Decode JWT to get userId
-      let userId;
-      try {
-        const tokenPayload = JSON.parse(atob(token.split('.')[1]));
-        userId = tokenPayload.userId || tokenPayload.sub;
-      } catch (e) {
-        throw new Error('Invalid token format');
-      }
-
-      // Fetch user data
-      const userRes = await fetch(`http://localhost:8080/api/users/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!userRes.ok) {
-        throw new Error(`Failed to fetch user: ${userRes.status}`);
-      }
-      const userData = await userRes.json();
-      setUser(userData);
-
-      // Fetch wallet balance
-      const walletRes = await fetch(`http://localhost:8088/api/v1/wallets/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
+      const [walletResult, transactionsResult, notificationsResult, rewardsResult] =
+        await Promise.allSettled([
+          api.get(`/api/v1/wallets/${userId}`),
+          api.get(`/api/transactions/user/${userId}`),
+          api.get(`/api/notify/${userId}`),
+          api.get(`/api/rewards/user/${userId}`),
+        ]);
 
       let walletBalance = 0;
-      if (walletRes.ok) {
-        const walletData = await walletRes.json();
-        walletBalance = walletData.balance;
+      if (walletResult.status === 'fulfilled') {
+        walletBalance = walletResult.value.data?.balance ?? 0;
       }
 
-      // Fetch recent transactions
-      const transactionsRes = await fetch(`http://localhost:8080/api/transactions/user/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
       let userTransactions = [];
-      if (transactionsRes.ok) {
-        const transactionsData = await transactionsRes.json();
-        userTransactions = transactionsData
+      if (transactionsResult.status === 'fulfilled') {
+        userTransactions = (transactionsResult.value.data || [])
           .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
           .slice(0, 5);
       }
 
-      // Fetch notifications from correct port (8084)
       let userNotifications = [];
-      try {
-        const notificationsRes = await fetch(`http://localhost:8084/api/notify/${userId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (notificationsRes.ok) {
-          userNotifications = await notificationsRes.json();
-          setLastNotificationCount(userNotifications.length);
-        }
-      } catch (notifyError) {
-        console.warn('Notifications service not available:', notifyError);
+      if (notificationsResult.status === 'fulfilled') {
+        userNotifications = notificationsResult.value.data || [];
+        setLastNotificationCount(userNotifications.length);
+      } else {
+        console.warn('Notifications service not available:', notificationsResult.reason);
       }
 
-      
-
-      // Fetch rewards from correct port (8083)
       let rewardsCount = 0;
-      try {
-        const rewardsRes = await fetch(`http://localhost:8083/api/rewards/user/${userId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (rewardsRes.ok) {
-          const rewardsData = await rewardsRes.json();
-          rewardsCount = rewardsData.length;
-        }
-      } catch (rewardsError) {
-        console.warn('Rewards service not available:', rewardsError);
+      if (rewardsResult.status === 'fulfilled') {
+        rewardsCount = (rewardsResult.value.data || []).length;
+      } else {
+        console.warn('Rewards service not available:', rewardsResult.reason);
       }
 
-      // Set all data
       setStats({
         balance: walletBalance,
         transactions: userTransactions.length,
         rewards: rewardsCount,
-        users: 1 // For individual user dashboard
+        users: 1,
       });
 
       setTransactions(userTransactions);
       setNotifications(userNotifications);
-
     } catch (err) {
       console.error('Dashboard error:', err);
-      setError(err.message);
+      setError(err.response?.data?.message || err.message || 'Failed to load dashboard');
     } finally {
       setLoading(false);
     }
-  };
-
-  const checkNewNotifications = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const tokenPayload = JSON.parse(atob(token.split('.')[1]));
-      const userId = tokenPayload.userId;
-
-      const response = await fetch(`http://localhost:8084/api/notify/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (response.ok) {
-        const newNotifications = await response.json();
-        
-        // Check if there are new notifications
-        if (newNotifications.length > lastNotificationCount) {
-          const newNotificationCount = newNotifications.length - lastNotificationCount;
-          const latestNotification = newNotifications[0]; // Get the newest one
-          
-          // Show browser notification
-          if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification('PayFlow - New Notification', {
-              body: latestNotification.message,
-              icon: '/logo.png',
-              badge: '/logo.png'
-            });
-          }
-          
-          // Show toast notification in app
-          showToastNotification(latestNotification, newNotificationCount);
-          
-          // Update notifications state and last count
-          setNotifications(newNotifications);
-          setLastNotificationCount(newNotifications.length);
-          
-          // Add pulse animation to bell
-          const bell = document.querySelector('.notification-bell');
-          if (bell) {
-            bell.classList.add('pulse');
-            setTimeout(() => {
-              bell.classList.remove('pulse');
-            }, 2000);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error checking notifications:', error);
-    }
-  };
+  }, [userId]);
 
   const showToastNotification = (notification, count) => {
-    // Remove existing toast if any
     const existingToast = document.querySelector('.toast-notification');
     if (existingToast) {
       existingToast.remove();
     }
-    
-    // Create toast element
+
     const toast = document.createElement('div');
     toast.className = 'toast-notification';
     toast.innerHTML = `
@@ -220,23 +96,68 @@ const Dashboard = () => {
         <button class="toast-close">&times;</button>
       </div>
     `;
-    
+
     document.body.appendChild(toast);
-    
-    // Auto remove after 5 seconds
+
     setTimeout(() => {
       if (toast.parentNode) {
         toast.remove();
       }
     }, 5000);
-    
-    // Close button
+
     toast.querySelector('.toast-close').addEventListener('click', () => {
       toast.remove();
     });
   };
 
-  // Request notification permission on component mount
+  const checkNewNotifications = useCallback(async () => {
+    if (!userId) return;
+
+    try {
+      const response = await api.get(`/api/notify/${userId}`);
+      const newNotifications = response.data || [];
+
+      if (newNotifications.length > lastNotificationCount) {
+        const newNotificationCount = newNotifications.length - lastNotificationCount;
+        const latestNotification = newNotifications[0];
+
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('PayMesh - New Notification', {
+            body: latestNotification.message,
+            icon: '/logo.png',
+            badge: '/logo.png',
+          });
+        }
+
+        showToastNotification(latestNotification, newNotificationCount);
+        setNotifications(newNotifications);
+        setLastNotificationCount(newNotifications.length);
+
+        const bell = document.querySelector('.notification-bell');
+        if (bell) {
+          bell.classList.add('pulse');
+          setTimeout(() => {
+            bell.classList.remove('pulse');
+          }, 2000);
+        }
+      }
+    } catch (err) {
+      console.error('Error checking notifications:', err);
+    }
+  }, [userId, lastNotificationCount]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    fetchDashboardData();
+
+    const pollInterval = setInterval(() => {
+      checkNewNotifications();
+    }, 10000);
+
+    return () => clearInterval(pollInterval);
+  }, [userId, fetchDashboardData, checkNewNotifications]);
+
   useEffect(() => {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
@@ -247,7 +168,6 @@ const Dashboard = () => {
     window.location.href = '/send-money';
   };
 
-  
   const handleAddFunds = () => {
     window.location.href = '/add-funds';
   };
@@ -262,7 +182,7 @@ const Dashboard = () => {
 
   const handleLogout = () => {
     localStorage.removeItem('token');
-    window.location.href = '/login';
+    navigate('/login');
   };
 
   const formatDate = (timestamp) => {
@@ -270,13 +190,13 @@ const Dashboard = () => {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   };
 
   const isSentTransaction = (transaction) => {
-    if (!user) return false;
-    return transaction.senderId === user.id;
+    if (!userId) return false;
+    return Number(transaction.senderId) === Number(userId);
   };
 
   if (loading) {
@@ -290,8 +210,6 @@ const Dashboard = () => {
 
   return (
     <div className="dashboard-container">
-      
-      {/* Header */}
       <header className="dashboard-header">
         <div className="header-left">
           <h1>Dashboard</h1>
@@ -325,16 +243,15 @@ const Dashboard = () => {
         </div>
       </header>
 
-      {/* Sidebar */}
       <aside className="dashboard-sidebar">
         <div className="sidebar-brand">
           <h2>
-            <img 
-              src="/assets/logo.png" 
-              alt="PayFlow Logo" 
-              className="brand-logo" 
+            <img
+              src="/assets/logo.png"
+              alt="PayMesh Logo"
+              className="brand-logo"
             />
-            PayFlow
+            PayMesh
           </h2>
         </div>
 
@@ -372,9 +289,7 @@ const Dashboard = () => {
         </nav>
       </aside>
 
-      {/* Main Content */}
       <main className="dashboard-main">
-        {/* Quick Actions */}
         <div className="quick-actions">
           <div className="action-card" onClick={handleSendMoney}>
             <div className="action-icon">
@@ -410,14 +325,13 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Stats Grid */}
         <div className="stats-grid">
           <div className="stat-card">
             <div className="stat-header">
               <div className="stat-icon wallet">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
               </div>
               <div className="stat-trend positive">Live</div>
             </div>
@@ -465,7 +379,6 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Recent Transactions */}
         <section className="dashboard-section">
           <div className="section-header">
             <h2>Recent Transactions</h2>
@@ -488,9 +401,7 @@ const Dashboard = () => {
               <tbody>
                 {transactions.map((transaction) => (
                   <tr key={transaction.id}>
-                    <td>
-                      {isSentTransaction(transaction) ? 'Sent' : 'Received'}
-                    </td>
+                    <td>{isSentTransaction(transaction) ? 'Sent' : 'Received'}</td>
                     <td>₹{transaction.amount}</td>
                     <td>
                       <span className={`status-badge ${transaction.status.toLowerCase()}`}>

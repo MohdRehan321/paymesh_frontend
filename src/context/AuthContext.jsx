@@ -1,5 +1,5 @@
-// context/AuthContext.js
 import { createContext, useContext, useState, useEffect } from 'react';
+import { jwtDecode } from 'jwt-decode';
 
 const AuthContext = createContext();
 
@@ -8,25 +8,29 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check if user is logged in (simple version)
+    // Check if token exists on page load
     const token = localStorage.getItem('authToken');
-    const userData = localStorage.getItem('userData');
     
-    if (token && userData) {
-      setUser(JSON.parse(userData));
+    if (token) {
+      try {
+        const decodedToken = jwtDecode(token);
+        setUser(decodedToken);
+      } catch (error) {
+        console.error("Invalid token format");
+        localStorage.removeItem('authToken');
+      }
     }
     setLoading(false);
   }, []);
 
-  const login = (userData, token) => {
+  const login = (token) => {
     localStorage.setItem('authToken', token);
-    localStorage.setItem('userData', JSON.stringify(userData));
-    setUser(userData);
+    const decodedToken = jwtDecode(token);
+    setUser(decodedToken);
   };
 
   const logout = () => {
     localStorage.removeItem('authToken');
-    localStorage.removeItem('userData');
     setUser(null);
   };
 
@@ -40,7 +44,7 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider value={value}>
-      {children}
+      {!loading && children}
     </AuthContext.Provider>
   );
 };

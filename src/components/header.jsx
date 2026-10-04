@@ -3,7 +3,7 @@ import '../stylesheets/header.scss';
 
 
 const Header = ({ 
-  title = "PayFlow", 
+  title = "PayMesh", 
   subtitle, 
   showUser = true, 
   showNotifications = true,

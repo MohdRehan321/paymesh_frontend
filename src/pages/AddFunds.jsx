@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import '../stylesheets/sendMoney.scss';
+import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const AddFunds = () => {
+  const { user } = useAuth();
+  const userId = user?.id ?? user?.userId ?? user?.sub;
+
   const [formData, setFormData] = useState({
     amount: ''
   });
@@ -14,28 +19,16 @@ const AddFunds = () => {
   const [walletBalance, setWalletBalance] = useState(0);
   const [creditedAmount, setCreditedAmount] = useState('');
 
-
   useEffect(() => {
-    fetchWalletBalance();
-  }, []);
+    if (userId) {
+      fetchWalletBalance();
+    }
+  }, [userId]);
 
   const fetchWalletBalance = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const tokenPayload = JSON.parse(atob(token.split('.')[1]));
-      const userId = tokenPayload.userId;
-      
-      const response = await fetch(`http://localhost:8088/api/v1/wallets/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const walletData = await response.json();
-        setWalletBalance(walletData.balance);
-      }
+      const response = await api.get(`/api/v1/wallets/${userId}`);
+      setWalletBalance(response.data.balance);
     } catch (error) {
       console.error('Error fetching wallet balance:', error);
     }
@@ -71,39 +64,24 @@ const AddFunds = () => {
     setMessage('');
 
     try {
-      const token = localStorage.getItem('token');
-      const tokenPayload = JSON.parse(atob(token.split('.')[1]));
-      const userId = tokenPayload.userId;
-
       const payload = {
-        userId: parseInt(userId),
-        currency: "INR",
+        userId: parseInt(userId, 10),
+        currency: 'INR',
         amount: parseFloat(formData.amount)
       };
 
-      const response = await fetch('http://localhost:8088/api/v1/wallets/credit', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(payload)
-      });
+      const response = await api.post('/api/v1/wallets/credit', payload);
+      const data = response.data;
 
-      const data = await response.json();
-
-      if (response.ok) {
-        setCreditedAmount(formData.amount);
-        setMessage(`✅ Successfully added ₹${formData.amount} to your wallet!`);
-        setFormData({ amount: '' });
-        
-        setWalletBalance(data.balance);
-        showSuccess();
-      } else {
-        showError('Add Funds Failed', data.message || 'Failed to add funds');
-      }
+      setCreditedAmount(formData.amount);
+      setMessage(`✅ Successfully added ₹${formData.amount} to your wallet!`);
+      setFormData({ amount: '' });
+      setWalletBalance(data.balance);
+      showSuccess();
     } catch (error) {
-      showError('Network Error', error.message);
+      const errorMessage =
+        error.response?.data?.message || error.message || 'Failed to add funds';
+      showError('Add Funds Failed', errorMessage);
     } finally {
       setLoading(false);
     }
@@ -117,7 +95,6 @@ const AddFunds = () => {
 
   return (
     <div className="send-money-container">
-      {/* Success Popup Modal */}
       {showSuccessPopup && (
         <div className="error-popup-overlay">
           <div className="error-popup success-popup">
@@ -126,8 +103,7 @@ const AddFunds = () => {
               <h3>Funds Added Successfully!</h3>
             </div>
             <div className="popup-body">
-            <p>₹{creditedAmount} has been added to your wallet.</p>
-
+              <p>₹{creditedAmount} has been added to your wallet.</p>
               <div className="new-balance">
                 New Balance: <strong>₹{walletBalance}</strong>
               </div>
@@ -141,7 +117,6 @@ const AddFunds = () => {
         </div>
       )}
 
-      {/* Error Popup Modal */}
       {showErrorPopup && (
         <div className="error-popup-overlay">
           <div className="error-popup">
@@ -167,7 +142,6 @@ const AddFunds = () => {
           <p>Add money to your wallet instantly</p>
         </div>
 
-        {/* Current Balance Display */}
         <div className="balance-display">
           <div className="balance-label">Current Balance</div>
           <div className="balance-amount">₹{walletBalance}</div>
@@ -190,11 +164,10 @@ const AddFunds = () => {
             />
           </div>
 
-          {/* Quick Amount Buttons */}
           <div className="quick-amounts">
             <label>Quick Add:</label>
             <div className="amount-buttons">
-              {quickAmounts.map(amount => (
+              {quickAmounts.map((amount) => (
                 <button
                   key={amount}
                   type="button"
@@ -207,10 +180,10 @@ const AddFunds = () => {
             </div>
           </div>
 
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             className="submit-btn"
-            disabled={loading}
+            disabled={loading || !userId}
           >
             {loading ? (
               <>
